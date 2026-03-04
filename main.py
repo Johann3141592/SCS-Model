@@ -6,7 +6,7 @@
 
 #configuration for the simulation
 samplesize = 100000 #number of minutes the simulation should run for
-
+bootstrap_samples = 1000 #number of bootstrap samples to use for calculating the uncertainty of the conditional probabilities
 props_of_interest = ["Buisness Park"] #This is what property is of intered for conditional probabilities
 #getting the necessary libraries
 import matplotlib.pyplot as plt
@@ -44,4 +44,23 @@ if __name__ == "__main__":
     summary.to_excel("./results/summary.xlsx", index=False)
 
     end_time = time.time()
+
+
     print(f"Simulation for samplesize of {samplesize} completed in {end_time - start_time:.2f} seconds.")
+    
+    print("extracting historical data for comparison")
+
+    setupdirectory = "./Setup-Files/"
+    outdirectory = "./results/"
+
+    df_hist = pd.read_csv(setupdirectory + "Historic_1.3_2026.txt", sep="\t", header=0)
+
+
+    losses_hist = df_hist["loss"].tolist()
+
+    aal = sum(losses_hist) / len(losses_hist)
+    print(f"Average Annual Loss (AAL) historic: {aal:.2f}")
+    print(f"Maximum Loss historic: {max(losses_hist):.2f}")
+
+    plot_occurence_exceedence(losses_hist, "Occurence Exceedence Plot - Historic")
+    plot_histogram(losses_hist, "Loss Distribution - Historic", bins=50, keepzeros=True)

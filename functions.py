@@ -78,7 +78,7 @@ def plot_histogram(losslist, title='Histogram of Losses', bins=50, keepzeros=Tru
         filename = title.replace("\n", "").replace(" ", "_")
         filename += "nozeros"
         filename = filename.replace("\n", "").replace(" ", "_")
-        title += f'\n (Excluding zero loss years which represent ({entries/n:.2f} of all simulated years))'
+        title += f'\n (Excluding zero loss years which are {entries/n*100:.2f}% of all simulated years)'
 
     plt.figure(figsize=(10, 6))
     
@@ -96,8 +96,19 @@ def plot_histogram(losslist, title='Histogram of Losses', bins=50, keepzeros=Tru
 
     
     # Styling
-    plt.xlabel('Losses (Million $)', fontsize=14, fontweight='bold')
-    plt.ylabel(f'Frequency (n={len(losslist)/1000:.0f}k)', fontsize=14, fontweight='bold')
+    plt.xlabel('Losses [Million $]', fontsize=14, fontweight='bold')
+    
+    # Adjust ylabel based on sample size
+    if len(losslist) <= 1000:
+        ylabel_text = f'Frequency (n={len(losslist)})'
+    elif len(losslist) <= 100000:
+        ylabel_text = f'Frequency [k] (n={len(losslist)/1000:.0f}k)'
+        plt.yticks(np.arange(0, max(n)*1.1, max(n)//10), [f"{int(y/1000)}" for y in np.arange(0, max(n)*1.1, max(n)//10)])
+    else:
+        ylabel_text = f'Frequency [k] (n={len(losslist)/100000:.0f}00k)'
+    
+
+    plt.ylabel(ylabel_text, fontsize=14, fontweight='bold')
     plt.title(title, fontsize=16, fontweight='bold', pad=20)
     plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.8)
     plt.legend(fontsize=11, framealpha=0.9)
@@ -128,12 +139,19 @@ def plot_convergence(mean_loss_list, std_of_mean_loss_list, title='Convergence o
                      color="#eb0808", alpha=0.1, label='Standard Error of AAL (95% Confidence Interval)')
     #making sure the axes are readable
     step = max(len(mean_loss_list)//10, 1)
-    labellist = range(0, len(mean_loss_list), step)
+    labellist = list(range(0, len(mean_loss_list), step))
     # Styling
     plt.ylim(0, max(mean_loss_list)*1.5)
-    plt.xlabel('Number of Simulations [k]', fontsize=14, fontweight='bold')
-    plt.ylabel('AAL (Million $)', fontsize=14, fontweight='bold')
-    plt.xticks(labellist, [f"{x/1000:.0f}" for x in labellist])
+    
+    # Adjust labels based on sample size
+    if len(mean_loss_list) > 100000:
+        plt.xlabel('Number of Simulations [100k]', fontsize=14, fontweight='bold')
+        plt.xticks(labellist, [f"{x/100000:.0f}" for x in labellist])
+    else:
+        plt.xlabel('Number of Simulations [k]', fontsize=14, fontweight='bold')
+        plt.xticks(labellist, [f"{x/1000:.0f}" for x in labellist])
+    
+    plt.ylabel('AAL [Million $]', fontsize=14, fontweight='bold')
     plt.title(title, fontsize=16, fontweight='bold', pad=20)
     plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.8)
     plt.legend(fontsize=11, framealpha=0.9)
@@ -143,6 +161,8 @@ def plot_convergence(mean_loss_list, std_of_mean_loss_list, title='Convergence o
     filename = title.replace("\n", "").replace(" ", "_")
     plt.savefig(outdirectory + filename + ".png", dpi=300)
     plt.close()
+
+
 
 def get_conditional_probability(losslist: list, typelist: list, type_of_interest: list, cutoff: float = 0, housecutoff: int = 0, title="Conditional Probabilities of Types of Interest Given Losses Above Cutoff", outdirectory="./results/"):
 
@@ -173,7 +193,7 @@ def get_conditional_probability(losslist: list, typelist: list, type_of_interest
         type_of_interest_clean = [prop.strip() for prop in type_of_interest]
         if any(proptype in destr_props_clean for proptype in type_of_interest_clean):
             counteror += 1
-    
+
     #conditional probabilities that houses (more than cutoff) are involved
     counterhouse = 0
     for destr_props in typelist_after_cutoff:
@@ -186,34 +206,148 @@ def get_conditional_probability(losslist: list, typelist: list, type_of_interest
     probhouse = counterhouse / total_events if total_events > 0 else 0
     return proband, probor, probhouse
 
+
+def get_std_of_conditional_probability_bootstrap(losslist: list, typelist: list, type_of_interest: list, cutoff: float = 0, housecutoff: int = 0, n_bootstrap: int = 1000):
+    # Bootstrap method to estimate the standard deviation of conditional probabilities
+    proband_list = []
+    probor_list = []
+    probhouse_list = []
+    n = len(losslist)
+    for _ in range(n_bootstrap):
+        indices = np.random.choice(n, n, replace=True)
+        sample_losslist = [losslist[i] for i in indices]
+        sample_typelist = [typelist[i] for i in indices]
+        proband, probor, probhouse = get_conditional_probability(sample_losslist, sample_typelist, type_of_interest, cutoff, housecutoff)
+        proband_list.append(proband)
+        probor_list.append(probor)
+        probhouse_list.append(probhouse)
+    return np.std(proband_list), np.std(probor_list), np.std(probhouse_list)
+
+
 def plot_occurence_exceedence(losslist, title="Occurence Exceedence Plot", outdirectory="./results/"):
     #creating a plot of OAP
     sorted_losses = np.sort(losslist)[::-1]  # Sort losses in descending order
     exceedence_prob = np.arange(1, len(sorted_losses) + 1) / len(sorted_losses)  # Exceedance probability
     return_period = 1 / exceedence_prob  # Return period in years
+    upper_loss_68 = []
+    upper_loss_95 = []
+    lower_loss_68 = []
+    lower_loss_95 = []
+    sample_size = len(losslist)
+    for i in exceedence_prob:
+        if sample_size*i >= 10 and sample_size*i <= sample_size - 10: #ensuring that we have enough samples to calculate the confidence intervals, if not we set them to nan and do not plot them
+            std = np.sqrt(sample_size*i*(1-i))
+            upper_loss_68.append(np.interp(1/((sample_size*i - std)/sample_size), return_period[::-1], sorted_losses[::-1]))
+            upper_loss_95.append(np.interp(1/((sample_size*i - 1.96*std)/sample_size), return_period[::-1], sorted_losses[::-1]))
+            lower_loss_68.append(np.interp(1/((sample_size*i + std)/sample_size), return_period[::-1], sorted_losses[::-1]))
+            lower_loss_95.append(np.interp(1/((sample_size*i + 1.96*std)/sample_size), return_period[::-1], sorted_losses[::-1]))
+        else:
+            upper_loss_68.append(np.nan)
+            upper_loss_95.append(np.nan)
+            lower_loss_68.append(np.nan)
+            lower_loss_95.append(np.nan)
+    
+    # Convert to numpy arrays for proper handling of NaN values
+    upper_loss_68 = np.array(upper_loss_68)
+    upper_loss_95 = np.array(upper_loss_95)
+    lower_loss_68 = np.array(lower_loss_68)
+    lower_loss_95 = np.array(lower_loss_95)
+    
+    # Check if 240 is within the data range
+    if 240 <= max(sorted_losses):
+        fundexceedence = np.interp(240, sorted_losses[::-1], return_period[::-1])
+        #print("Debug: 240 in data range, fundexceedence calculated as:", fundexceedence)
+    else:
+        fundexceedence = None  # Beyond data range
 
-    fundexceedence = np.interp(240, sorted_losses[::-1], return_period[::-1])
+    # Calculate confidence intervals for 240M$ fund exceedance
+    if fundexceedence is not None:
+        p_fund = 1 / fundexceedence
+        if sample_size * p_fund >= 5 and sample_size * (1-p_fund) >= 5:
+            std_fund = np.sqrt(sample_size * p_fund * (1-p_fund))
+            fundexceedence_lower_68 = sample_size / (sample_size * p_fund + std_fund)
+            fundexceedence_upper_68 = sample_size / (sample_size * p_fund - std_fund)
+        else:
+            fundexceedence_lower_68 = None
+            fundexceedence_upper_68 = None
+    else:
+        fundexceedence_lower_68 = None
+        fundexceedence_upper_68 = None
 
-
-    ten_year_event = np.interp(10, return_period[::-1], sorted_losses[::-1])
-    fifty_year_event = np.interp(50, return_period[::-1], sorted_losses[::-1])
-    hundred_year_event = np.interp(100, return_period[::-1], sorted_losses[::-1])
+    # Calculate point estimates and confidence intervals for key return periods
+    # Using direct calculation to avoid NaN interpolation issues
+    def calculate_ci_for_return_period(rp, sorted_losses, return_period, sample_size):
+        """Calculate CI directly for a specific return period"""
+        point_est = np.interp(rp, return_period[::-1], sorted_losses[::-1])
+        
+        p = 1 / rp
+        # Check if we have enough data for reliable CI
+        if sample_size * p >= 5 and sample_size * (1-p) >= 5:
+            std = np.sqrt(sample_size * p * (1-p))
+            # Calculate adjusted return periods for CI bounds
+            rp_lower = sample_size / (sample_size * p + std)  # Lower RP → lower loss
+            rp_upper = sample_size / (sample_size * p - std)  # Upper RP → upper loss
+            lower_68 = np.interp(rp_lower, return_period[::-1], sorted_losses[::-1])
+            upper_68 = np.interp(rp_upper, return_period[::-1], sorted_losses[::-1])
+        else:
+            lower_68 = np.nan
+            upper_68 = np.nan
+        
+        return point_est, lower_68, upper_68
+    
+    ten_year_event, ten_year_lower_68, ten_year_upper_68 = calculate_ci_for_return_period(10, sorted_losses, return_period, sample_size)
+    fifty_year_event, fifty_year_lower_68, fifty_year_upper_68 = calculate_ci_for_return_period(50, sorted_losses, return_period, sample_size)
+    hundred_year_event, hundred_year_lower_68, hundred_year_upper_68 = calculate_ci_for_return_period(100, sorted_losses, return_period, sample_size)
+    
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(return_period, sorted_losses, marker='o', linestyle='-', color='#3498db')
+    ax.plot(return_period, sorted_losses, linestyle='-', color="#000000", label='Observed losses')
+    
+    # Only plot confidence intervals where they are valid (not NaN)
+    valid_68 = ~np.isnan(lower_loss_68) & ~np.isnan(upper_loss_68)
+    if np.any(valid_68):
+        ax.fill_between(return_period[valid_68], lower_loss_68[valid_68], upper_loss_68[valid_68], 
+                        color='#3498db', alpha=0.2, label='68% Confidence Interval (only plotted where statistically reliable)')
+    
+    valid_95 = ~np.isnan(lower_loss_95) & ~np.isnan(upper_loss_95)
+    if np.any(valid_95):
+        ax.fill_between(return_period[valid_95], lower_loss_95[valid_95], upper_loss_95[valid_95], 
+                        color="#eb0808", alpha=0.1, label='95% Confidence Interval (only plotted where statistically reliable)')
     #ax.set_xscale('log')
 
-    ax.set_xlabel('Return Period (Years)', fontsize=14, fontweight='bold')
-    ax.set_ylabel('Losses (Million $)', fontsize=14, fontweight='bold')
+    ax.set_xlabel('Return Period [Years]', fontsize=14, fontweight='bold')
+    ax.set_ylabel('Losses [Million $]', fontsize=14, fontweight='bold')
     ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
     ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.8)
-    ax.set_ylim(0, 300)
+    ax.legend(loc='upper left', fontsize=10, framealpha=0.9)
+    ax.set_ylim(0, 320)
     ax.set_xlim(0, 200)
     
-    # Create legend-style text box
-    textstr = (f'10-year event: {ten_year_event:.1f}M$\n'
-               f'50-year event: {fifty_year_event:.1f}M$\n'
-               f'100-year event: {hundred_year_event:.1f}M$\n'
-               f'Exceeding 240M$ fund: {fundexceedence:.1f}-year event')
+    # Create legend-style text box with confidence intervals
+    if fundexceedence is not None:
+        if fundexceedence_lower_68 is not None and fundexceedence_upper_68 is not None:
+            fund_text = f'{fundexceedence:.1f}-year event [{fundexceedence_lower_68:.1f}-{fundexceedence_upper_68:.1f}]'
+        else:
+            fund_text = f'{fundexceedence:.1f}-year event'
+    else:
+        fund_text = '>100-year event (not observed in data)'
+    
+    # Format text with CIs if available (not NaN)
+    ten_year_text = f'10-year event: {ten_year_event:.1f}M$'
+    if not np.isnan(ten_year_lower_68) and not np.isnan(ten_year_upper_68):
+        ten_year_text += f' [{ten_year_lower_68:.1f}-{ten_year_upper_68:.1f}]'
+    
+    fifty_year_text = f'50-year event: {fifty_year_event:.1f}M$'
+    if not np.isnan(fifty_year_lower_68) and not np.isnan(fifty_year_upper_68):
+        fifty_year_text += f' [{fifty_year_lower_68:.1f}-{fifty_year_upper_68:.1f}]'
+    
+    hundred_year_text = f'100-year event: {hundred_year_event:.1f}M$'
+    if not np.isnan(hundred_year_lower_68) and not np.isnan(hundred_year_upper_68):
+        hundred_year_text += f' [{hundred_year_lower_68:.1f}-{hundred_year_upper_68:.1f}]'
+    
+    textstr = (f'{ten_year_text}\n'
+               f'{fifty_year_text}\n'
+               f'{hundred_year_text}\n'
+               f'Exceeding 240M$ fund: {fund_text}')
     props = dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor='#e74c3c', linewidth=2)
     ax.text(0.98, 0.50, textstr, transform=ax.transAxes, fontsize=11, 
             verticalalignment='top', horizontalalignment='right', bbox=props, color='#e74c3c')
@@ -238,20 +372,34 @@ def analyse_conditional_probaility(losslist: list, typelist: list, type_of_inter
     #analysing conditional probability for different cutoffs
     cutoffs = []
     andprobs = []
+    andprobstds = []
     orprobs = []
     houseprobs = []
-    for cutoff in range(0, 300, 1):
+    for cutoff in range(0, 300, 5):
         proband, probor, probhouse = get_conditional_probability(losslist, typelist, type_of_interest, cutoff=cutoff)
         andprobs.append(proband)
         orprobs.append(probor)
         houseprobs.append(probhouse)
         cutoffs.append(cutoff)
+        stdand, stdor, stdhouse = get_std_of_conditional_probability_bootstrap(losslist, typelist, type_of_interest, cutoff=cutoff, n_bootstrap=1000)
+        if cutoff%10 == 0:  # Print progress every 10 cutoffs
+            print(f"Calculated conditional probabilities and standard errors for cutoff {cutoff}M$")
+        andprobstds.append(stdand)
     plt.figure(figsize=(10, 6))
-    plt.plot(cutoffs, andprobs, color='#3498db')
+    plt.plot(cutoffs, andprobs, color='#3498db', label='Conditional Probability')
+    plt.fill_between(cutoffs, 
+                     np.array(andprobs) - np.array(andprobstds), 
+                     np.array(andprobs) + np.array(andprobstds), 
+                     color='#3498db', alpha=0.2, label='Standard Error of Conditional Probability (68% Confidence Interval)')
+    plt.fill_between(cutoffs, 
+                     np.array(andprobs) - 2*np.array(andprobstds), 
+                     np.array(andprobs) + 2*np.array(andprobstds), 
+                     color="#eb0808", alpha=0.1, label='Standard Error of Conditional Probability (95% Confidence Interval)')
     plt.title(f"Conditional Probability of a loss given that \n the {type_of_interest[0]} in location {buiseness_park_cords} is destroyed in {'relocation' if relocation else 'normal'} scenario", fontsize=16, fontweight='bold', pad=20)
-    plt.xlabel("Loss (Million $)", fontsize=14, fontweight='bold')
+    plt.xlabel("Loss [Million $]", fontsize=14, fontweight='bold')
     plt.ylabel("Conditional Probability", fontsize=14, fontweight='bold')
     plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.8)
+    plt.legend(fontsize=11, framealpha=0.9)
     plt.tight_layout()
     filename = f"Conditional_Probability_{type_of_interest[0]}_Destroyed_{'relocation' if relocation else 'normal'}_scenario_Location_{buiseness_park_cords}"
     plt.savefig(outdirectory + filename + ".png", dpi=300)
@@ -278,10 +426,17 @@ def plot_convergence_of_exceedence(exceedence_probabilities, std_exceedence_prob
     step = max(len(exceedence_probabilities)//10, 1)
     labellist = range(0, len(exceedence_probabilities), step)
     # Styling
-    plt.ylim(0, 0.2)
-    plt.xlabel('Number of Simulations [k]', fontsize=14, fontweight='bold')
+    plt.ylim(0, 0.025)
+    
+    # Adjust labels based on sample size
+    if len(exceedence_probabilities) > 100000:
+        plt.xlabel('Number of Simulations [100k]', fontsize=14, fontweight='bold')
+        plt.xticks(labellist, [f"{x/100000:.0f}" for x in labellist])
+    else:
+        plt.xlabel('Number of Simulations [k]', fontsize=14, fontweight='bold')
+        plt.xticks(labellist, [f"{x/1000:.0f}" for x in labellist])
+    
     plt.ylabel('Exceedence Probability', fontsize=14, fontweight='bold')
-    plt.xticks(labellist, [f"{x/1000:.0f}" for x in labellist])
     plt.title(title, fontsize=16, fontweight='bold', pad=20)
     plt.grid(True, alpha=0.3, linestyle='--', linewidth=0.8)
     plt.legend(fontsize=11, framealpha=0.9)
@@ -347,7 +502,7 @@ def plot_property_map(df, relocation, buiseness_park, buiseness_park_cords, map_
     chordpixs = {}
     for i in range(1, 13):
         for j in range(1, 13):
-            chordpixs[(i, j)] = (18 + i*stepsizex*0.96 - stepsizex/2, 27 + (13-j)*stepsizey + stepsizey/2)
+            chordpixs[(i, j)] = (18 + i*stepsizex*0.96 - stepsizex/2, 27 + (12-j)*stepsizey + stepsizey/2)
     
     # Plot each property
     for index, row in df_plot.iterrows():
